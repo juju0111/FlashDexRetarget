@@ -129,7 +129,29 @@ def tracking_success_metrics(
     if ever_state is not None:
         metrics.update(_ever_success(eval_cfg, tp_cb, fail, fail_obj, scored, ever_state))
     metrics.update(_spider_ever(raw_eval, tp_cb, st, scored, ever_state))
+    _dump_all_rollouts(rec_cb, states, fail, fail_obj, scored, tp_cb)
     return metrics
+
+
+def _dump_all_rollouts(rec_cb, states, fail, fail_obj, scored, tp_cb) -> None:
+    """FDR_DUMP_ROLLOUTS=<out.npz>: every eval rollout's object trajectory (env-local), for cross-method scoring."""
+    import os
+    out = os.environ.get("FDR_DUMP_ROLLOUTS")
+    if not out or rec_cb is None:
+        return
+    import numpy as np
+    st = states[id(rec_cb)]
+    n = sum(int(s["valid_steps_per_env"].shape[0]) for s in st)
+    rolls = [rec_cb.rollout_arrays(st, i) for i in range(n)]
+    keep = [i for i, r in enumerate(rolls) if r is not None]
+    T = min(len(rolls[i]["obj_pos"]) for i in keep)
+    np.savez(out,
+             obj_pos=np.stack([rolls[i]["obj_pos"][:T] for i in keep]),      # (E, T, S, 3) env-local
+             obj_quat=np.stack([rolls[i]["obj_quat"][:T] for i in keep]),    # (E, T, S, 4) wxyz
+             motion_id=np.array([rolls[i]["motion_id"] for i in keep]),
+             fail_obj_k1=fail_obj[keep, tp_cb.k1_idx].cpu().numpy(), fail_k1=fail[keep, tp_cb.k1_idx].cpu().numpy(),
+             scored=scored[keep].cpu().numpy())
+    print(f"[dump] {len(keep)} rollouts x {T} steps -> {out}", flush=True)
 
 
 # ─── tracking success parts ────────────────────────────────────────────────────
